@@ -10,8 +10,8 @@ def hello():
 def status():
     return jsonify(ok=True, team="Regular Snails", msg="My first API")
 
-# add new api function, return api
-@app.get("")
+# add api function
+@app.get("/jtrejomyapi")
 def my_api():
     return "This is the new HTTP API function"
 
