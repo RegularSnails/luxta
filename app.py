@@ -1,13 +1,14 @@
-from flask import Flask, jsonify
+from flask import Flask, jsonify, redirect, url_for, request
 app = Flask(__name__)
 
 @app.get("/")
 def hello():
     return "Hello World from Regular Snails"
 
-@app.get("/status")
-def status():
-    return jsonify(ok=True, team="Regular Snails", msg="My first API")
+@app.route('/login', methods=['POST', 'GET'])
+def login():
+        return "Login page - work in progress :)", 400
+
 
 if __name__ == "__main__":
     app.run(port=3000)
