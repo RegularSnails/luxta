@@ -1,0 +1,25 @@
+import unittest
+from app import calc_avg_brightness
+
+#from api other branch to here test
+class TestBrightness(unittest.TestCase):
+#testing test number values
+
+    def test_values(self):
+        values = [100, 180, 200]
+        self.assertEqual(calc_avg_brightness(values), 160.0)
+
+    def test_empty_list(self):
+        self.assertEqual(calc_avg_brightness([]), 0)
+
+    def test_none_input(self):
+        self.assertEqual(calc_avg_brightness(None), 0)
+
+    def test_single_value(self):
+        self.assertEqual(calc_avg_brightness([50]), 50.0)
+
+    def test_all_zero(self):
+        self.assertEqual(calc_avg_brightness([0, 0, 0]), 0)
+
+if __name__ == '__main__':
+    unittest.main()
