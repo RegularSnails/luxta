@@ -10,4 +10,4 @@ def status():
     return jsonify(ok=True, team="Regular Snails", msg="My first API")
 
 if __name__ == "__main__":
-    app.run(port=3000)
+    app.run(port=80)
