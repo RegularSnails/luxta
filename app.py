@@ -3,7 +3,7 @@ app = Flask(__name__)
 
 @app.get("/")
 def hello():
-    return "Hello World from Regular Snails"
+    return "Welcome to Luxta! Under development."
 
 @app.get("/status")
 def status():
