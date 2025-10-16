@@ -1,0 +1,9 @@
+{
+  "expo": {
+    "name": "Regular Snails",
+    "slug": "regular-snails-universal",
+    "plugins": [],
+    "web": { "bundler": "metro" }
+  }
+}
+
