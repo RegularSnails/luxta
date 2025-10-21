@@ -63,16 +63,7 @@ jobs:
           name: web-dist
           path: ${{ env.PROJECT_DIR }}/$BUILD_DIR
 
-  deploy-pages:
-    if: github.ref == 'refs/heads/main'
-    needs: build-and-test
-    runs-on: ubuntu-latest
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
-    steps:
-      - id: deployment
-        uses: actions/deploy-pages@v4
+  
 
   deploy-ec2:
     if: github.ref == 'refs/heads/main'
