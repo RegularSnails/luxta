@@ -1,4 +1,4 @@
-name: bulild-and-test
+name: build-and-test
 
 on:
   push:
@@ -10,6 +10,12 @@ jobs:
     runs-on: ubuntu-latest
     environment: build
     steps:
+      - name: Validate required secrets
+        run: |
+          test -n "${{ secrets.EC2_HOST }}" || { echo "EC2_HOST is empty"; exit 1; }
+          test -n "${{ secrets.EC2_USER }}" || { echo "EC2_USER is empty"; exit 1; }
+          test -n "${{ secrets.EC2_SSH_KEY }}" || { echo "EC2_SSH_KEY is empty"; exit 1; }
+
       - name: Checkout
         uses: actions/checkout@v3
 
