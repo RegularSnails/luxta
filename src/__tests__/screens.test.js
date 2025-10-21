@@ -8,10 +8,8 @@ test("home shows hello world", () => {
   expect(tree.getByText("Hello World from Regular Snails")).toBeTruthy();
 });
 
-test("luca shows data", () => {
-  const tree = render(<LucaScreen />);
-  expect(tree.getByText("Luca's first API should be working.")).toBeTruthy();
-  expect(tree.getByText(/owner:/)).toBeTruthy();
-  expect(tree.getByText(/team:/)).toBeTruthy();
+test("map screen renders", () => {
+  const tree = render(<MapScreen />);
+  expect(tree.getByText("Luxta Map")).toBeTruthy();
 });
 
