@@ -20,34 +20,17 @@ jobs:
           distribution: temurin
           java-version: "21"
 
-      # Detect the folder that contains pom.xml (first match)
-      - name: Locate pom.xml
-        id: findpom
-        shell: bash
-        run: |
-          set -e
-          hit="$(git ls-files | grep -m1 -E '^.*pom\.xml$' || true)"
-          if [ -z "$hit" ]; then
-            echo "No pom.xml found in repo. Failing build."
-            exit 1
-          fi
-          dir="$(dirname "$hit")"
-          echo "POM_DIR=$dir" | tee -a "$GITHUB_ENV"
-          echo "Found pom in: $dir"
-
       - name: Build Spring Boot JAR
-        shell: bash
+        working-directory: server
         run: |
-          cd "$POM_DIR"
-          # Use mvnw if present, fall back to mvn
-          if [ -x "./mvnw" ]; then ./mvnw -q -DskipTests package; else mvn -q -DskipTests package; fi
+          ./mvnw -q -DskipTests package || mvn -q -DskipTests package
           ls -l target
 
       - name: Upload JAR artifact
         uses: actions/upload-artifact@v4
         with:
           name: app-jar
-          path: ${{ env.POM_DIR }}/target/*SNAPSHOT.jar
+          path: server/target/*SNAPSHOT.jar
 
   deploy-ec2:
     needs: build-and-test
