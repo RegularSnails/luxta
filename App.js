@@ -3,7 +3,7 @@ import { NavigationContainer } from "@react-navigation/native";
 import { createNativeStackNavigator } from "@react-navigation/native-stack";
 import 'leaflet/dist/leaflet.css';
 import HomeScreen from "./src/screens/HomeScreen";
-import LucaScreen from "./src/screens/LucaScreen";
+import MapScreen from "./src/screens/MapScreen";
 
 const Stack = createNativeStackNavigator();
 
