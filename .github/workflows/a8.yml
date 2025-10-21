@@ -1,4 +1,4 @@
-name: CI/CD to EC2 (Spring + Expo auto-export)
+name: CI/CD to EC2 (Spring + optional Expo export)
 
 on:
   push:
@@ -14,34 +14,50 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # --- Build Expo web export into Spring's static/ ---
+      # --- Locate RN app (optional) ---
+      - name: Locate RN app
+        id: findrn
+        shell: bash
+        run: |
+          set -e
+          RN_DIR=""
+          while IFS= read -r p; do
+            if grep -qE '"expo"|"react-native"' "$p"; then
+              RN_DIR="$(dirname "$p")"; break
+            fi
+          done < <(git ls-files | grep -E '^.*package\.json$')
+          echo "RN_DIR=$RN_DIR" | tee -a "$GITHUB_ENV"
+          if [ -n "$RN_DIR" ]; then
+            echo "Found RN app at: $RN_DIR"
+          else
+            echo "No RN app found. Will skip RN export."
+          fi
+
+      # --- If RN app is present, build and export to Spring static ---
       - name: Set up Node 20
+        if: env.RN_DIR != ''
         uses: actions/setup-node@v4
         with:
           node-version: '20'
 
       - name: Install RN deps
-        working-directory: mobile-temp
+        if: env.RN_DIR != ''
+        working-directory: ${{ env.RN_DIR }}
         run: npm ci
 
-      # Optional: run RN tests. Remove if you want to skip.
-      - name: Test RN (optional)
-        working-directory: mobile-temp
-        run: npm test -- --ci --passWithNoTests
-
       - name: Export Expo web directly into Spring static
-        working-directory: mobile-temp
+        if: env.RN_DIR != ''
+        working-directory: ${{ env.RN_DIR }}
         env:
           EXPO_NO_PROMPT: '1'
           EXPO_NO_TELEMETRY: '1'
         run: |
-          # ensure static dir exists in the server project
+          # adjust this path if your Spring project is not at server/
           mkdir -p ../server/src/main/resources/static
-          # export the web build straight into Spring static
           npx expo export --platform web --output-dir ../server/src/main/resources/static
           ls -l ../server/src/main/resources/static | head -n 20
 
-      # --- Build Spring Boot JAR with the new static files bundled ---
+      # --- Build Spring Boot JAR (always) ---
       - name: Set up Java 21
         uses: actions/setup-java@v4
         with:
@@ -49,7 +65,7 @@ jobs:
           java-version: '21'
 
       - name: Build Spring Boot JAR
-        working-directory: server
+        working-directory: server    # change if your Spring project folder is named differently
         run: |
           ./mvnw -q -DskipTests package || mvn -q -DskipTests package
           ls -l target
