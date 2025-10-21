@@ -1,9 +1,13 @@
 {
   "expo": {
-    "name": "Regular Snails",
-    "slug": "regular-snails-universal",
-    "plugins": [],
-    "web": { "bundler": "metro" }
+    "name": "Luxta",
+    "slug": "luxta",
+    "web": {
+      "name": "Luxta",
+      "shortName": "Luxta",
+      "bundler": "metro"
+    }
   }
 }
+
 
