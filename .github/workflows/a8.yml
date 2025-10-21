@@ -5,7 +5,6 @@ on:
     branches: [ main ]
   workflow_dispatch:
 
-# Only need read contents; no pages/id-token permissions
 permissions:
   contents: read
 
@@ -21,17 +20,34 @@ jobs:
           distribution: temurin
           java-version: "21"
 
-      - name: Build Spring Boot JAR
-        working-directory: luxta-deploy/regular-snails-server
+      # Detect the folder that contains pom.xml (first match)
+      - name: Locate pom.xml
+        id: findpom
+        shell: bash
         run: |
-          ./mvnw -q -DskipTests package || mvn -q -DskipTests package
+          set -e
+          hit="$(git ls-files | grep -m1 -E '^.*pom\.xml$' || true)"
+          if [ -z "$hit" ]; then
+            echo "No pom.xml found in repo. Failing build."
+            exit 1
+          fi
+          dir="$(dirname "$hit")"
+          echo "POM_DIR=$dir" | tee -a "$GITHUB_ENV"
+          echo "Found pom in: $dir"
+
+      - name: Build Spring Boot JAR
+        shell: bash
+        run: |
+          cd "$POM_DIR"
+          # Use mvnw if present, fall back to mvn
+          if [ -x "./mvnw" ]; then ./mvnw -q -DskipTests package; else mvn -q -DskipTests package; fi
           ls -l target
 
       - name: Upload JAR artifact
         uses: actions/upload-artifact@v4
         with:
           name: app-jar
-          path: luxta-deploy/regular-snails-server/target/*SNAPSHOT.jar
+          path: ${{ env.POM_DIR }}/target/*SNAPSHOT.jar
 
   deploy-ec2:
     needs: build-and-test
@@ -48,7 +64,7 @@ jobs:
         with:
           host: ${{ secrets.EC2_HOST }}
           username: ${{ secrets.EC2_USER }}
-          key: ${{ secrets.EC2_SSH_KEY }}   # make sure your secret is named like this
+          key: ${{ secrets.EC2_SSH_KEY }}
           source: "./dist/*.jar"
           target: "/home/${{ secrets.EC2_USER }}/deploy/"
 
@@ -62,4 +78,3 @@ jobs:
             ls -l /home/${{ secrets.EC2_USER }}/deploy/ || true
             sudo systemctl restart ${{ secrets.SERVICE_NAME }}
             sudo systemctl status  ${{ secrets.SERVICE_NAME }} --no-pager
-
