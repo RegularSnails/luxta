@@ -5,7 +5,7 @@ on:
     branches: [ main, luca ]
   workflow_dispatch:
 
-# Avoid overlapping deploys for the same branch
+# Prevent overlapping deploys for the same branch
 concurrency:
   group: deploy-${{ github.ref }}
   cancel-in-progress: true
@@ -14,8 +14,8 @@ permissions:
   contents: read
 
 env:
-  SERVER_DIR: server      # change if your Spring project folder is different
-  RN_DIR: "."              # set to 'web' or 'app' explicitly to skip auto-detect, e.g. RN_DIR: 'web'
+  SERVER_DIR: server   # <-- your Spring Boot project folder
+  RN_DIR: ""           # set to your Expo/React app folder (e.g. 'web'); leave '' to auto-detect
 
 jobs:
   build-and-test:
@@ -23,7 +23,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # --- Locate RN app if RN_DIR not preset ---
+      # --- Locate Expo/React app if RN_DIR wasn't set above ---
       - name: Locate RN app
         if: env.RN_DIR == ''
         id: findrn
@@ -63,11 +63,12 @@ jobs:
         env:
           EXPO_NO_PROMPT: '1'
           EXPO_NO_TELEMETRY: '1'
-          CI: 'false'  # avoids treating warnings as errors in some toolchains
+          CI: 'false'
         run: |
           mkdir -p ../${{ env.SERVER_DIR }}/src/main/resources/static
           npx expo export --platform web --output-dir ../${{ env.SERVER_DIR }}/src/main/resources/static
-          ls -l ../${{ env.SERVER_DIR }}/src/main/resources/static | head -n 20
+          echo "Static files now in ${{ env.SERVER_DIR }}/src/main/resources/static"
+          ls -l ../${{ env.SERVER_DIR }}/src/main/resources/static | head -n 40 || true
 
       # --- Build Spring Boot JAR (always) ---
       - name: Set up Java 21
@@ -119,6 +120,15 @@ jobs:
           source: "./dist/*.jar"
           target: "/home/${{ secrets.EC2_USER }}/deploy/"
 
+      - name: List remote deploy dir (debug)
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.EC2_HOST }}
+          username: ${{ secrets.EC2_USER }}
+          key: ${{ secrets.EC2_SSH_KEY }}
+          script: |
+            ls -l "/home/${{ secrets.EC2_USER }}/deploy" || true
+
       - name: Point service to newest JAR and restart
         uses: appleboy/ssh-action@v1.0.3
         with:
@@ -128,16 +138,35 @@ jobs:
           script: |
             set -euo pipefail
             APP_DIR="/home/${{ secrets.EC2_USER }}/deploy"
-            LATEST="$(ls -t "$APP_DIR"/*.jar | head -1)"
-            echo "Latest jar on server: $LATEST"
-            ln -sfn "$LATEST" "$APP_DIR/app.jar"
+
+            echo "== Remote JARs before link =="
+            ls -l "$APP_DIR"/*.jar || true
+
+            # Choose newest versioned jar (exclude app.jar)
+            LATEST="$(ls -1t "$APP_DIR"/*.jar 2>/dev/null | grep -v '/app\.jar$' | head -1 || true)"
+
+            if [ -n "${LATEST:-}" ]; then
+              CURR="$(readlink -f "$APP_DIR/app.jar" 2>/dev/null || echo '')"
+              NEW="$(readlink -f "$LATEST" 2>/dev/null || echo "$LATEST")"
+              if [ "$CURR" != "$NEW" ]; then
+                ln -sfn "$LATEST" "$APP_DIR/app.jar"
+                echo "Updated app.jar -> $LATEST"
+              else
+                echo "app.jar already points to latest ($CURR)"
+              fi
+            else
+              echo "No versioned jars found (only app.jar present). Leaving as-is."
+            fi
+
             sudo systemctl daemon-reload || true
             sudo systemctl restart "${{ secrets.SERVICE_NAME }}"
             sudo systemctl is-active "${{ secrets.SERVICE_NAME }}"
-            # Health check (try root and actuator if present)
-            curl -I http://127.0.0.1:8080/ || curl -I http://127.0.0.1:8080/actuator/health || true
-            # keep last 5 jars only
-            ls -1t "$APP_DIR"/*.jar | tail -n +6 | xargs -r rm -f
+
+            # Health check (root or actuator if available)
+            curl -sI http://127.0.0.1:8080/ | head -n1 || curl -sI http://127.0.0.1:8080/actuator/health | head -n1 || true
+
+            # Keep last 5 versioned jars (exclude app.jar)
+            ls -1t "$APP_DIR"/*.jar 2>/dev/null | grep -v '/app\.jar$' | tail -n +6 | xargs -r rm -f
 
       - name: Show logs on failure
         if: failure()
