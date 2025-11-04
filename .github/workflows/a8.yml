@@ -15,7 +15,7 @@ permissions:
 
 env:
   SERVER_DIR: server   # <-- your Spring Boot project folder
-  RN_DIR: ""           # set to your Expo/React app folder (e.g. 'web'); leave '' to auto-detect
+  RN_DIR: "mobile-temp"           # set to your Expo/React app folder (e.g. 'web'); leave '' to auto-detect
 
 jobs:
   build-and-test:
