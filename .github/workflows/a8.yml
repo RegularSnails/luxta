@@ -5,7 +5,6 @@ on:
     branches: [ main, luca ]
   workflow_dispatch:
 
-# Prevent overlapping deploys for the same branch
 concurrency:
   group: deploy-${{ github.ref }}
   cancel-in-progress: true
@@ -14,9 +13,12 @@ permissions:
   contents: read
 
 env:
-  SERVER_DIR: server   # <-- Spring Boot project folder (you confirmed pom.xml is here)
-  RN_DIR: '.'          # <-- Expo/React app folder. Use '.' if the Expo project is at repo root.
-                       #     If it's in a subfolder, e.g. 'web', change this to 'web'.
+  # Your repo layout:
+  # └─ mobile-temp/
+  #    ├─ package.json   <-- Expo/React app here
+  #    └─ server/        <-- Spring Boot project here (pom.xml lives here)
+  RN_DIR: 'mobile-temp'
+  SERVER_DIR: 'mobile-temp/server'
 
 jobs:
   build-and-test:
@@ -24,35 +26,13 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # --- If you left RN_DIR empty, this would auto-detect. Since RN_DIR is set, this step is skipped. ---
-      - name: Locate RN app (skipped when RN_DIR set)
-        if: env.RN_DIR == ''
-        id: findrn
-        shell: bash
-        run: |
-          set -e
-          RN_DIR=""
-          while IFS= read -r p; do
-            if grep -qE '"expo"|"react-native"' "$p"; then
-              RN_DIR="$(dirname "$p")"; break
-            fi
-          done < <(git ls-files | grep -E '^.*package\.json$')
-          echo "RN_DIR=$RN_DIR" | tee -a "$GITHUB_ENV"
-          if [ -n "$RN_DIR" ]; then
-            echo "Found RN app at: $RN_DIR"
-          else
-            echo "No RN app found. Will skip RN export."
-          fi
-
-      # --- If RN app is present, build and export to Spring static ---
+      # --- Expo/React export into Spring static ---
       - name: Set up Node 20
-        if: env.RN_DIR != ''
         uses: actions/setup-node@v4
         with:
-          node-version: '20'    # keep simple; no brittle cache path
+          node-version: '20'   # no cache-dependency-path to avoid false failures
 
       - name: Detect package manager
-        if: env.RN_DIR != ''
         id: pm
         shell: bash
         run: |
@@ -67,7 +47,6 @@ jobs:
           echo "Detected package manager: ${{ steps.pm.outputs.pm }}"
 
       - name: Install RN deps
-        if: env.RN_DIR != ''
         working-directory: ${{ env.RN_DIR }}
         shell: bash
         run: |
@@ -83,7 +62,6 @@ jobs:
           fi
 
       - name: Export Expo web into Spring static
-        if: env.RN_DIR != ''
         working-directory: ${{ env.RN_DIR }}
         env:
           EXPO_NO_PROMPT: '1'
@@ -92,7 +70,7 @@ jobs:
         shell: bash
         run: |
           set -e
-          # Because RN_DIR is the repo root ('.'), the Spring project is at ./server
+          # RN_DIR = mobile-temp; Spring module is mobile-temp/server
           mkdir -p server/src/main/resources/static
           if [ "${{ steps.pm.outputs.pm }}" = "pnpm" ]; then
             pnpm exec expo export --platform web --output-dir server/src/main/resources/static
@@ -101,10 +79,10 @@ jobs:
           else
             npx --yes expo export --platform web --output-dir server/src/main/resources/static
           fi
-          echo "Static files now in server/src/main/resources/static:"
+          echo "Static files now in ${PWD}/server/src/main/resources/static:"
           ls -l server/src/main/resources/static | head -n 40 || true
 
-      # --- Build Spring Boot JAR (always) ---
+      # --- Build Spring Boot JAR ---
       - name: Set up Java 21
         uses: actions/setup-java@v4
         with:
