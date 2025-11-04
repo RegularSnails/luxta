@@ -2,11 +2,20 @@ name: CI/CD to EC2 (Spring + optional Expo export)
 
 on:
   push:
-    branches: [ main ]
+    branches: [ main, luca ]
   workflow_dispatch:
+
+# Avoid overlapping deploys for the same branch
+concurrency:
+  group: deploy-${{ github.ref }}
+  cancel-in-progress: true
 
 permissions:
   contents: read
+
+env:
+  SERVER_DIR: server      # change if your Spring project folder is different
+  RN_DIR: "."              # set to 'web' or 'app' explicitly to skip auto-detect, e.g. RN_DIR: 'web'
 
 jobs:
   build-and-test:
@@ -14,8 +23,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # --- Locate RN app (optional) ---
+      # --- Locate RN app if RN_DIR not preset ---
       - name: Locate RN app
+        if: env.RN_DIR == ''
         id: findrn
         shell: bash
         run: |
@@ -39,6 +49,8 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: ${{ env.RN_DIR }}/package-lock.json
 
       - name: Install RN deps
         if: env.RN_DIR != ''
@@ -51,11 +63,11 @@ jobs:
         env:
           EXPO_NO_PROMPT: '1'
           EXPO_NO_TELEMETRY: '1'
+          CI: 'false'  # avoids treating warnings as errors in some toolchains
         run: |
-          # adjust this path if your Spring project is not at server/
-          mkdir -p ../server/src/main/resources/static
-          npx expo export --platform web --output-dir ../server/src/main/resources/static
-          ls -l ../server/src/main/resources/static | head -n 20
+          mkdir -p ../${{ env.SERVER_DIR }}/src/main/resources/static
+          npx expo export --platform web --output-dir ../${{ env.SERVER_DIR }}/src/main/resources/static
+          ls -l ../${{ env.SERVER_DIR }}/src/main/resources/static | head -n 20
 
       # --- Build Spring Boot JAR (always) ---
       - name: Set up Java 21
@@ -63,10 +75,12 @@ jobs:
         with:
           distribution: temurin
           java-version: '21'
+          cache: 'maven'
 
       - name: Build Spring Boot JAR
-        working-directory: server    # change if your Spring project folder is named differently
+        working-directory: ${{ env.SERVER_DIR }}
         run: |
+          chmod +x mvnw || true
           ./mvnw -q -DskipTests package || mvn -q -DskipTests package
           ls -l target
 
@@ -74,7 +88,8 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: app-jar
-          path: server/target/*SNAPSHOT.jar
+          path: ${{ env.SERVER_DIR }}/target/*.jar
+          if-no-files-found: error
 
   deploy-ec2:
     needs: build-and-test
@@ -86,6 +101,15 @@ jobs:
           name: app-jar
           path: ./dist
 
+      - name: Ensure deploy dir exists
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.EC2_HOST }}
+          username: ${{ secrets.EC2_USER }}
+          key: ${{ secrets.EC2_SSH_KEY }}
+          script: |
+            mkdir -p "/home/${{ secrets.EC2_USER }}/deploy"
+
       - name: Copy JAR to EC2
         uses: appleboy/scp-action@v0.1.7
         with:
@@ -95,12 +119,33 @@ jobs:
           source: "./dist/*.jar"
           target: "/home/${{ secrets.EC2_USER }}/deploy/"
 
-      - name: Restart service on EC2
+      - name: Point service to newest JAR and restart
         uses: appleboy/ssh-action@v1.0.3
         with:
           host: ${{ secrets.EC2_HOST }}
           username: ${{ secrets.EC2_USER }}
           key: ${{ secrets.EC2_SSH_KEY }}
           script: |
-            sudo systemctl restart ${{ secrets.SERVICE_NAME }}
-            sudo systemctl status  ${{ secrets.SERVICE_NAME }} --no-pager
+            set -euo pipefail
+            APP_DIR="/home/${{ secrets.EC2_USER }}/deploy"
+            LATEST="$(ls -t "$APP_DIR"/*.jar | head -1)"
+            echo "Latest jar on server: $LATEST"
+            ln -sfn "$LATEST" "$APP_DIR/app.jar"
+            sudo systemctl daemon-reload || true
+            sudo systemctl restart "${{ secrets.SERVICE_NAME }}"
+            sudo systemctl is-active "${{ secrets.SERVICE_NAME }}"
+            # Health check (try root and actuator if present)
+            curl -I http://127.0.0.1:8080/ || curl -I http://127.0.0.1:8080/actuator/health || true
+            # keep last 5 jars only
+            ls -1t "$APP_DIR"/*.jar | tail -n +6 | xargs -r rm -f
+
+      - name: Show logs on failure
+        if: failure()
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.EC2_HOST }}
+          username: ${{ secrets.EC2_USER }}
+          key: ${{ secrets.EC2_SSH_KEY }}
+          script: |
+            sudo systemctl status "${{ secrets.SERVICE_NAME }}" --no-pager || true
+            sudo journalctl -u "${{ secrets.SERVICE_NAME }}" -n 200 --no-pager || true
