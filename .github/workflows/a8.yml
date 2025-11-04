@@ -17,8 +17,8 @@ env:
   # └─ mobile-temp/
   #    ├─ package.json   <-- Expo/React app here
   #    └─ server/        <-- Spring Boot project here (pom.xml lives here)
-  RN_DIR: 'mobile-temp'
-  SERVER_DIR: 'mobile-temp/server'
+  RN_DIR: '.'
+  SERVER_DIR: 'server'
 
 jobs:
   build-and-test:
