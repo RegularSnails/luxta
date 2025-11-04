@@ -6,6 +6,7 @@ export default function HomeScreen({ navigation }) {
     <View style={styles.container}>
       <Text style={styles.title}>Welcome to Luxta, a Weather Related Photography Assistance App</Text>
       <Button title="Open Map" onPress={() => navigation.navigate("Map")} />
+      <Button title="Login" onPress={() => navigation.navigate("Login")} />
     </View>
   );
 }
