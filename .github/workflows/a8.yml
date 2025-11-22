@@ -41,19 +41,15 @@ jobs:
         shell: bash
         run: |
           set -euxo pipefail
-          # 1) remove stale hashed files so index.html can't point to old bundles
           rm -rf "${{ env.SERVER_DIR }}/src/main/resources/static"
           mkdir -p "${{ env.SERVER_DIR }}/src/main/resources/static"
 
-          # 2) fresh export
           npx --yes expo export --platform web --clear \
             --output-dir "${{ env.SERVER_DIR }}/src/main/resources/static"
 
-          # 3) version marker to verify after deploy
           echo "built $(date -Is) sha ${GITHUB_SHA::7}" \
             > "${{ env.SERVER_DIR }}/src/main/resources/static/_version.txt"
 
-          # 4) quick sanity print
           test -f "${{ env.SERVER_DIR }}/src/main/resources/static/index.html"
           ls -l "${{ env.SERVER_DIR }}/src/main/resources/static" | head -n 50 || true
 
@@ -98,6 +94,9 @@ jobs:
           name: app-jar
           path: ./dist
 
+      - name: List downloaded artifact (debug)
+        run: ls -R ./dist
+
       - name: Ensure deploy dir & stop service
         uses: appleboy/ssh-action@v1.0.3
         with:
@@ -115,18 +114,9 @@ jobs:
           host: ${{ secrets.EC2_HOST }}
           username: ${{ secrets.EC2_USER }}
           key: ${{ secrets.EC2_SSH_KEY }}
-          source: "./dist/*.jar"
+          # IMPORTANT: recursive glob to match dist/server/target/*.jar
+          source: "./dist/**/*.jar"
           target: "/home/${{ secrets.EC2_USER }}/deploy/"
-
-      - name: List remote deploy dir (debug)
-        uses: appleboy/ssh-action@v1.0.3
-        with:
-          host: ${{ secrets.EC2_HOST }}
-          username: ${{ secrets.EC2_USER }}
-          key: ${{ secrets.EC2_SSH_KEY }}
-          script: |
-            set -euxo pipefail
-            ls -lah "/home/${{ secrets.EC2_USER }}/deploy" || true
 
       - name: Point service to newest JAR & restart (robust)
         uses: appleboy/ssh-action@v1.0.3
@@ -137,52 +127,48 @@ jobs:
           script: |
             set -euxo pipefail
             APP_DIR="/home/${{ secrets.EC2_USER }}/deploy"
-            SVC="${{ secrets.SERVICE_NAME }}"
+            SHA_SHORT="${{ github.sha }}"
+            SHA_SHORT="${SHA_SHORT::7}"
 
             echo "== Remote JARs (timestamps) =="
             ls -lt "$APP_DIR"/*.jar || true
 
-            # Pick latest **versioned** JAR, explicitly excluding app.jar
+            # pick newest REAL jar (exclude app.jar symlink)
             LATEST="$(ls -1t "$APP_DIR"/*.jar 2>/dev/null | grep -v '/app\.jar$' | head -1 || true)"
-            if [ -z "$LATEST" ]; then
-              # Fallback: if for some reason only app.jar exists, use it
-              LATEST="$(ls -1t "$APP_DIR"/*.jar 2>/dev/null | head -1 || true)"
+            if [ -z "${LATEST:-}" ]; then
+              LATEST="$(readlink -f "$APP_DIR/app.jar" || true)"
             fi
-            test -n "$LATEST" || { echo "No JAR files found in $APP_DIR"; exit 1; }
-            echo "LATEST=$LATEST"
+            [ -n "${LATEST:-}" ] || { echo "No JAR found in $APP_DIR"; exit 1; }
 
-            # Update the symlink atomically
             ln -sfn "$LATEST" "$APP_DIR/app.jar"
             echo "Now using $(readlink -f "$APP_DIR/app.jar")"
 
-            # Restart and wait until service is active
             sudo systemctl daemon-reload || true
-            sudo systemctl restart "$SVC" || sudo systemctl start "$SVC" || true
+            sudo systemctl restart "${{ secrets.SERVICE_NAME }}" || sudo systemctl start "${{ secrets.SERVICE_NAME }}"
 
-            for i in $(seq 1 60); do
-              if sudo systemctl is-active --quiet "$SVC"; then
-                echo "Service is active"
-                break
+            # wait up to ~60s for service to become 'active'
+            for i in {1..30}; do
+              if sudo systemctl is-active --quiet "${{ secrets.SERVICE_NAME }}"; then
+                echo "Service is active"; break
               fi
-              echo "Waiting for service to be active... ($i/60)"
-              sleep 1
+              echo "Waiting for service to become active... ($i)"
+              sleep 2
             done
-            sudo systemctl is-active --quiet "$SVC" || { echo "Service failed to become active"; sudo systemctl status "$SVC" --no-pager || true; exit 1; }
+            if ! sudo systemctl is-active --quiet "${{ secrets.SERVICE_NAME }}"; then
+              echo "Service did not become active. Recent logs:"
+              sudo journalctl -u "${{ secrets.SERVICE_NAME }}" -n 200 --no-pager || true
+              exit 1
+            fi
 
-            # Verify the running app serves our new marker (commit SHA)
-            for i in $(seq 1 15); do
+            # wait for app to serve the new version marker
+            OK=""
+            for i in {1..30}; do
               MARKER="$(curl -fsS http://127.0.0.1:8080/_version.txt || true)"
-              echo "marker: $MARKER"
-              if echo "$MARKER" | grep -q "${GITHUB_SHA::7}"; then
-                echo "Version marker OK"
-                exit 0
-              fi
-              sleep 1
+              echo "marker($i): $MARKER"
+              if echo "$MARKER" | grep -q "$SHA_SHORT"; then OK="yes"; break; fi
+              sleep 2
             done
-
-            echo "ERROR: server still on old build or marker missing"
-            curl -sS http://127.0.0.1:8080/ | head -n 30 || true
-            exit 1
+            [ "$OK" = "yes" ] || { echo "ERROR: server still on old build"; exit 1; }
 
       - name: Show logs on failure
         if: failure()
@@ -193,4 +179,4 @@ jobs:
           key: ${{ secrets.EC2_SSH_KEY }}
           script: |
             sudo systemctl status "${{ secrets.SERVICE_NAME }}" --no-pager || true
-            sudo journalctl -u "${{ secrets.SERVICE_NAME }}" -n 200 --no-pager || true
+            sudo journalctl -u "${{ secrets.SERVICE_NAME }}" -n 400 --no-pager || true
