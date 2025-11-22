@@ -13,7 +13,7 @@ permissions:
   contents: read
 
 env:
-  RN_DIR: '.'          # Project root containing package.json
+  RN_DIR: '.'          # Project root with package.json
   SERVER_DIR: 'server' # Spring Boot module with pom.xml
 
 jobs:
@@ -32,7 +32,7 @@ jobs:
         working-directory: ${{ env.RN_DIR }}
         run: npm ci --no-audit --no-fund
 
-      # ---- KEY FIX: fresh Expo web export into Spring static ----
+      # ---- KEY FIX: always export a fresh Expo web build into Spring static ----
       - name: Export Expo web into Spring static (fresh)
         working-directory: ${{ env.RN_DIR }}
         env:
@@ -67,7 +67,7 @@ jobs:
           ./mvnw -q -DskipTests clean package || mvn -q -DskipTests clean package
           ls -l target
 
-      - name: Verify JAR contains new web build marker
+      - name: Verify JAR contains _version marker
         working-directory: ${{ env.SERVER_DIR }}
         shell: bash
         run: |
@@ -95,7 +95,20 @@ jobs:
           path: ./dist
 
       - name: List downloaded artifact (debug)
-        run: ls -R ./dist
+        run: ls -R ./dist || true
+
+      # ---- NEW: flatten the jar(s) to a predictable folder ----
+      - name: Gather JAR(s) to upload
+        shell: bash
+        run: |
+          set -euxo pipefail
+          mkdir -p to-upload
+          found="$(find dist -type f -name '*.jar' -print)"
+          echo "$found" | sed -n '1,200p'
+          test -n "$found" || { echo "No JARs found under ./dist"; exit 1; }
+          # copy all jars into to-upload/
+          while IFS= read -r f; do cp -f "$f" to-upload/; done <<< "$found"
+          ls -l to-upload
 
       - name: Ensure deploy dir & stop service
         uses: appleboy/ssh-action@v1.0.3
@@ -114,8 +127,7 @@ jobs:
           host: ${{ secrets.EC2_HOST }}
           username: ${{ secrets.EC2_USER }}
           key: ${{ secrets.EC2_SSH_KEY }}
-          # IMPORTANT: recursive glob to match dist/server/target/*.jar
-          source: "./dist/**/*.jar"
+          source: "./to-upload/*.jar"
           target: "/home/${{ secrets.EC2_USER }}/deploy/"
 
       - name: Point service to newest JAR & restart (robust)
@@ -133,9 +145,9 @@ jobs:
             echo "== Remote JARs (timestamps) =="
             ls -lt "$APP_DIR"/*.jar || true
 
-            # pick newest REAL jar (exclude app.jar symlink)
+            # newest REAL jar (exclude the app.jar symlink if present)
             LATEST="$(ls -1t "$APP_DIR"/*.jar 2>/dev/null | grep -v '/app\.jar$' | head -1 || true)"
-            if [ -z "${LATEST:-}" ]; then
+            if [ -z "${LATEST:-}" ] && [ -L "$APP_DIR/app.jar" ]; then
               LATEST="$(readlink -f "$APP_DIR/app.jar" || true)"
             fi
             [ -n "${LATEST:-}" ] || { echo "No JAR found in $APP_DIR"; exit 1; }
@@ -146,7 +158,7 @@ jobs:
             sudo systemctl daemon-reload || true
             sudo systemctl restart "${{ secrets.SERVICE_NAME }}" || sudo systemctl start "${{ secrets.SERVICE_NAME }}"
 
-            # wait up to ~60s for service to become 'active'
+            # wait for service to become active
             for i in {1..30}; do
               if sudo systemctl is-active --quiet "${{ secrets.SERVICE_NAME }}"; then
                 echo "Service is active"; break
@@ -154,11 +166,7 @@ jobs:
               echo "Waiting for service to become active... ($i)"
               sleep 2
             done
-            if ! sudo systemctl is-active --quiet "${{ secrets.SERVICE_NAME }}"; then
-              echo "Service did not become active. Recent logs:"
-              sudo journalctl -u "${{ secrets.SERVICE_NAME }}" -n 200 --no-pager || true
-              exit 1
-            fi
+            sudo systemctl is-active --quiet "${{ secrets.SERVICE_NAME }}" || { echo "Service failed to become active"; exit 1; }
 
             # wait for app to serve the new version marker
             OK=""
@@ -168,7 +176,7 @@ jobs:
               if echo "$MARKER" | grep -q "$SHA_SHORT"; then OK="yes"; break; fi
               sleep 2
             done
-            [ "$OK" = "yes" ] || { echo "ERROR: server still on old build"; exit 1; }
+            [ "$OK" = "yes" ] || { echo "ERROR: server still on old build or marker missing"; exit 1; }
 
       - name: Show logs on failure
         if: failure()
