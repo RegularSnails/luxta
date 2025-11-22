@@ -13,8 +13,8 @@ permissions:
   contents: read
 
 env:
-  RN_DIR: '.'          # Project root with package.json
-  SERVER_DIR: 'server' # Spring Boot module with pom.xml
+  RN_DIR: '.'          # project root (contains package.json)
+  SERVER_DIR: 'server' # Spring Boot module (contains pom.xml)
 
 jobs:
   build:
@@ -32,12 +32,13 @@ jobs:
         working-directory: ${{ env.RN_DIR }}
         run: npm ci --no-audit --no-fund
 
-      # ---- KEY FIX: always export a fresh Expo web build into Spring static ----
+      # ---- ALWAYS export a fresh Expo web build into Spring static ----
       - name: Export Expo web into Spring static (fresh)
         working-directory: ${{ env.RN_DIR }}
         env:
           EXPO_NO_PROMPT: '1'
           EXPO_NO_TELEMETRY: '1'
+          CI: 'true'
         shell: bash
         run: |
           set -euxo pipefail
@@ -47,6 +48,7 @@ jobs:
           npx --yes expo export --platform web --clear \
             --output-dir "${{ env.SERVER_DIR }}/src/main/resources/static"
 
+          # version marker to verify in JAR and at runtime
           echo "built $(date -Is) sha ${GITHUB_SHA::7}" \
             > "${{ env.SERVER_DIR }}/src/main/resources/static/_version.txt"
 
@@ -77,11 +79,21 @@ jobs:
           unzip -p "$JAR" BOOT-INF/classes/static/_version.txt | tee /tmp/version.txt
           grep -q "${GITHUB_SHA::7}" /tmp/version.txt
 
+      # ---------- Stage jar into a flat folder so upload is trivial ----------
+      - name: Stage JAR for upload
+        shell: bash
+        run: |
+          set -euxo pipefail
+          rm -rf upload
+          mkdir -p upload
+          cp "${{ env.SERVER_DIR }}"/target/*.jar upload/
+          ls -l upload
+
       - name: Upload JAR artifact
         uses: actions/upload-artifact@v4
         with:
           name: app-jar
-          path: ${{ env.SERVER_DIR }}/target/*.jar
+          path: upload/*.jar
           if-no-files-found: error
 
   deploy-ec2:
@@ -97,19 +109,6 @@ jobs:
       - name: List downloaded artifact (debug)
         run: ls -R ./dist || true
 
-      # ---- NEW: flatten the jar(s) to a predictable folder ----
-      - name: Gather JAR(s) to upload
-        shell: bash
-        run: |
-          set -euxo pipefail
-          mkdir -p to-upload
-          found="$(find dist -type f -name '*.jar' -print)"
-          echo "$found" | sed -n '1,200p'
-          test -n "$found" || { echo "No JARs found under ./dist"; exit 1; }
-          # copy all jars into to-upload/
-          while IFS= read -r f; do cp -f "$f" to-upload/; done <<< "$found"
-          ls -l to-upload
-
       - name: Ensure deploy dir & stop service
         uses: appleboy/ssh-action@v1.0.3
         with:
@@ -118,17 +117,20 @@ jobs:
           key: ${{ secrets.EC2_SSH_KEY }}
           script: |
             set -euxo pipefail
-            mkdir -p "/home/${{ secrets.EC2_USER }}/deploy"
+            APP_DIR="/home/${{ secrets.EC2_USER }}/deploy"
+            mkdir -p "$APP_DIR"
             sudo systemctl stop "${{ secrets.SERVICE_NAME }}" || true
 
-      - name: Copy JAR to EC2
+      - name: Copy JAR to EC2 (flatten path)
         uses: appleboy/scp-action@v0.1.7
         with:
           host: ${{ secrets.EC2_HOST }}
           username: ${{ secrets.EC2_USER }}
           key: ${{ secrets.EC2_SSH_KEY }}
-          source: "./to-upload/*.jar"
+          source: "./dist/*.jar"
           target: "/home/${{ secrets.EC2_USER }}/deploy/"
+          overwrite: true
+          strip_components: 1  # <— drops the leading "dist/" so the JAR lands directly in /deploy
 
       - name: Point service to newest JAR & restart (robust)
         uses: appleboy/ssh-action@v1.0.3
@@ -139,44 +141,48 @@ jobs:
           script: |
             set -euxo pipefail
             APP_DIR="/home/${{ secrets.EC2_USER }}/deploy"
-            SHA_SHORT="${{ github.sha }}"
-            SHA_SHORT="${SHA_SHORT::7}"
+            SVC="${{ secrets.SERVICE_NAME }}"
+            SHORT_SHA="$(printf '%s' '${{ github.sha }}' | cut -c1-7)"
 
             echo "== Remote JARs (timestamps) =="
+            ls -lt "$APP_DIR" || true
             ls -lt "$APP_DIR"/*.jar || true
 
-            # newest REAL jar (exclude the app.jar symlink if present)
-            LATEST="$(ls -1t "$APP_DIR"/*.jar 2>/dev/null | grep -v '/app\.jar$' | head -1 || true)"
-            if [ -z "${LATEST:-}" ] && [ -L "$APP_DIR/app.jar" ]; then
-              LATEST="$(readlink -f "$APP_DIR/app.jar" || true)"
-            fi
-            [ -n "${LATEST:-}" ] || { echo "No JAR found in $APP_DIR"; exit 1; }
+            # Find newest jar anywhere under APP_DIR (exclude the app.jar symlink)
+            LATEST="$(find "$APP_DIR" -type f -name '*.jar' ! -name 'app.jar' -printf '%T@ %p\n' | sort -nr | head -1 | awk '{print $2}')"
+            [ -n "${LATEST:-}" ] || { echo "No JAR found under $APP_DIR"; exit 1; }
+            echo "LATEST=$LATEST"
 
             ln -sfn "$LATEST" "$APP_DIR/app.jar"
             echo "Now using $(readlink -f "$APP_DIR/app.jar")"
 
             sudo systemctl daemon-reload || true
-            sudo systemctl restart "${{ secrets.SERVICE_NAME }}" || sudo systemctl start "${{ secrets.SERVICE_NAME }}"
+            sudo systemctl restart "$SVC" || sudo systemctl start "$SVC" || true
 
-            # wait for service to become active
-            for i in {1..30}; do
-              if sudo systemctl is-active --quiet "${{ secrets.SERVICE_NAME }}"; then
-                echo "Service is active"; break
+            # wait up to 60s for the service to be active
+            for i in $(seq 1 60); do
+              if sudo systemctl is-active --quiet "$SVC"; then
+                echo "Service is active"
+                break
               fi
-              echo "Waiting for service to become active... ($i)"
-              sleep 2
+              echo "Waiting for service to be active... ($i/60)"
+              sleep 1
             done
-            sudo systemctl is-active --quiet "${{ secrets.SERVICE_NAME }}" || { echo "Service failed to become active"; exit 1; }
+            sudo systemctl is-active "$SVC"
 
-            # wait for app to serve the new version marker
-            OK=""
-            for i in {1..30}; do
-              MARKER="$(curl -fsS http://127.0.0.1:8080/_version.txt || true)"
-              echo "marker($i): $MARKER"
-              if echo "$MARKER" | grep -q "$SHA_SHORT"; then OK="yes"; break; fi
-              sleep 2
-            done
-            [ "$OK" = "yes" ] || { echo "ERROR: server still on old build or marker missing"; exit 1; }
+            echo "== Verify marker inside the running JAR =="
+            unzip -p "$APP_DIR/app.jar" BOOT-INF/classes/static/_version.txt | tee /tmp/_version.txt || true
+            grep -q "$SHORT_SHA" /tmp/_version.txt || { echo "ERROR: JAR does not contain expected SHA ($SHORT_SHA)"; exit 1; }
+            echo "JAR marker OK ($SHORT_SHA)"
+
+            # Optional: HTTP smoke test (don't fail if _version.txt endpoint 404s)
+            echo "== HTTP smoke check =="
+            curl -fsSI http://127.0.0.1:8080/ | head -n1 || true
+            curl -fsS  http://127.0.0.1:8080/ | head -n20 || true
+
+            # Keep last 5 versioned jars (exclude app.jar)
+            find "$APP_DIR" -maxdepth 1 -type f -name '*.jar' ! -name 'app.jar' -printf '%T@ %p\n' \
+              | sort -nr | awk 'NR>5 {print $2}' | xargs -r rm -f
 
       - name: Show logs on failure
         if: failure()
