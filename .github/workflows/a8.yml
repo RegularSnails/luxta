@@ -118,7 +118,17 @@ jobs:
           source: "./dist/*.jar"
           target: "/home/${{ secrets.EC2_USER }}/deploy/"
 
-      - name: Point service to newest JAR & restart
+      - name: List remote deploy dir (debug)
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.EC2_HOST }}
+          username: ${{ secrets.EC2_USER }}
+          key: ${{ secrets.EC2_SSH_KEY }}
+          script: |
+            set -euxo pipefail
+            ls -lah "/home/${{ secrets.EC2_USER }}/deploy" || true
+
+      - name: Point service to newest JAR & restart (robust)
         uses: appleboy/ssh-action@v1.0.3
         with:
           host: ${{ secrets.EC2_HOST }}
@@ -127,20 +137,52 @@ jobs:
           script: |
             set -euxo pipefail
             APP_DIR="/home/${{ secrets.EC2_USER }}/deploy"
-            LATEST="$(ls -1t "$APP_DIR"/*.jar | head -1)"
+            SVC="${{ secrets.SERVICE_NAME }}"
+
+            echo "== Remote JARs (timestamps) =="
+            ls -lt "$APP_DIR"/*.jar || true
+
+            # Pick latest **versioned** JAR, explicitly excluding app.jar
+            LATEST="$(ls -1t "$APP_DIR"/*.jar 2>/dev/null | grep -v '/app\.jar$' | head -1 || true)"
+            if [ -z "$LATEST" ]; then
+              # Fallback: if for some reason only app.jar exists, use it
+              LATEST="$(ls -1t "$APP_DIR"/*.jar 2>/dev/null | head -1 || true)"
+            fi
+            test -n "$LATEST" || { echo "No JAR files found in $APP_DIR"; exit 1; }
+            echo "LATEST=$LATEST"
+
+            # Update the symlink atomically
             ln -sfn "$LATEST" "$APP_DIR/app.jar"
             echo "Now using $(readlink -f "$APP_DIR/app.jar")"
-            sudo systemctl daemon-reload || true
-            sudo systemctl start "${{ secrets.SERVICE_NAME }}"
-            sudo systemctl is-active "${{ secrets.SERVICE_NAME }}"
 
-            echo "== build marker from running app =="
-            MARKER="$(curl -fsS http://127.0.0.1:8080/_version.txt || true)"
-            echo "$MARKER"
-            case "$MARKER" in
-              *${GITHUB_SHA::7}*) echo "Version marker OK";;
-              *) echo "ERROR: server still on old build"; exit 1;;
-            esac
+            # Restart and wait until service is active
+            sudo systemctl daemon-reload || true
+            sudo systemctl restart "$SVC" || sudo systemctl start "$SVC" || true
+
+            for i in $(seq 1 60); do
+              if sudo systemctl is-active --quiet "$SVC"; then
+                echo "Service is active"
+                break
+              fi
+              echo "Waiting for service to be active... ($i/60)"
+              sleep 1
+            done
+            sudo systemctl is-active --quiet "$SVC" || { echo "Service failed to become active"; sudo systemctl status "$SVC" --no-pager || true; exit 1; }
+
+            # Verify the running app serves our new marker (commit SHA)
+            for i in $(seq 1 15); do
+              MARKER="$(curl -fsS http://127.0.0.1:8080/_version.txt || true)"
+              echo "marker: $MARKER"
+              if echo "$MARKER" | grep -q "${GITHUB_SHA::7}"; then
+                echo "Version marker OK"
+                exit 0
+              fi
+              sleep 1
+            done
+
+            echo "ERROR: server still on old build or marker missing"
+            curl -sS http://127.0.0.1:8080/ | head -n 30 || true
+            exit 1
 
       - name: Show logs on failure
         if: failure()
