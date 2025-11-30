@@ -25,9 +25,9 @@ function App() {
             </button>
             {isLeftDropdownOpen && (
               <div className="dropdown-menu">
-                <a href="#option1" className="dropdown-item">Option 1</a>
-                <a href="#option2" className="dropdown-item">Option 2</a>
-                <a href="#option3" className="dropdown-item">Option 3</a>
+                <button className="dropdown-item">Option 1</button>
+                <button className="dropdown-item">Option 2</button>
+                <button className="dropdown-item">Option 3</button>
               </div>
             )}
           </div>
@@ -46,9 +46,9 @@ function App() {
             </button>
             {isCircularDropdownOpen && (
               <div className="dropdown-menu">
-                <a href="#profile" className="dropdown-item">Profile</a>
-                <a href="#settings" className="dropdown-item">Settings</a>
-                <a href="#logout" className="dropdown-item">Logout</a>
+                <button className="dropdown-item">Profile</button>
+                <button className="dropdown-item">Settings</button>
+                <button className="dropdown-item">Logout</button>
               </div>
             )}
           </div>
