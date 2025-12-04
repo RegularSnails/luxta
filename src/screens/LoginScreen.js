@@ -14,7 +14,10 @@ export default function LoginScreen({ navigation }) {
     setLoading(true);
     try {
       await login(email, password);
-      navigation.replace("Home");
+
+      // ⭐ UPDATED LINE: Go straight to Map after login
+      navigation.replace("Map");
+
     } catch (err) {
       setError(err.message || "Failed to log in.");
     } finally {
@@ -25,6 +28,7 @@ export default function LoginScreen({ navigation }) {
   return (
     <View style={styles.container}>
       <Text style={styles.title}>Login</Text>
+
       <TextInput
         style={styles.input}
         placeholder="Email"
@@ -33,6 +37,7 @@ export default function LoginScreen({ navigation }) {
         keyboardType="email-address"
         autoCapitalize="none"
       />
+
       <TextInput
         style={styles.input}
         placeholder="Password"
@@ -40,11 +45,21 @@ export default function LoginScreen({ navigation }) {
         onChangeText={setPassword}
         secureTextEntry
       />
+
       {error ? <Text style={styles.error}>{error}</Text> : null}
-      <Button title={loading ? "Logging in..." : "Login"} onPress={handleLogin} disabled={loading} />
+
+      <Button
+        title={loading ? "Logging in..." : "Login"}
+        onPress={handleLogin}
+        disabled={loading}
+      />
+
       <View style={styles.footer}>
         <Text>New here?</Text>
-        <Button title="Create account" onPress={() => navigation.replace("SignUp")} />
+        <Button
+          title="Create account"
+          onPress={() => navigation.replace("SignUp")}
+        />
       </View>
     </View>
   );
@@ -59,8 +74,8 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     marginBottom: 16,
     paddingHorizontal: 8,
-    borderRadius: 4
+    borderRadius: 4,
   },
   error: { color: "red", marginBottom: 12 },
-  footer: { marginTop: 16 }
+  footer: { marginTop: 16 },
 });
