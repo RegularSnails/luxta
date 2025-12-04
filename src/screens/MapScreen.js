@@ -1,6 +1,7 @@
 import React from "react";
-import { View, Text, StyleSheet } from "react-native";
+import { View, Text, StyleSheet, Button } from "react-native";
 import { WebView } from "react-native-webview";
+import { useAuth } from "../contexts/AuthContext";
 
 /**
  * Native (iOS/Android) interactive map screen using OpenStreetMap:
@@ -17,7 +18,19 @@ const LON = -117.82408;
 const ZOOM = 12;
 const OSM_URL = `https://www.openstreetmap.org/#map=${ZOOM}/${LAT}/${LON}`;
 
-export default function MapScreen() {
+export default function MapScreen({ navigation }) {
+  const { currentUser } = useAuth();
+
+  if (!currentUser) {
+    return (
+      <View style={[styles.container, styles.lockedContainer]}>
+        <Text style={styles.lockedTitle}>Login required</Text>
+        <Text style={styles.lockedText}>You need to sign in to access the map.</Text>
+        <Button title="Go to Login" onPress={() => navigation.replace("Login")} />
+      </View>
+    );
+  }
+
   return (
     <View style={styles.container}>
       <Text style={styles.title}>Luxta Map</Text>
@@ -67,4 +80,10 @@ const styles = StyleSheet.create({
     paddingVertical: 8,
     paddingHorizontal: 16,
   },
+  lockedContainer: {
+    backgroundColor: "#111",
+    paddingHorizontal: 24,
+  },
+  lockedTitle: { color: "#fff", fontSize: 20, fontWeight: "700", marginBottom: 8 },
+  lockedText: { color: "#ddd", fontSize: 14, marginBottom: 12, textAlign: "center" },
 });
