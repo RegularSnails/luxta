@@ -6,13 +6,31 @@ export default function HomeScreen({ navigation }) {
     <View style={styles.container}>
       <Text style={styles.logo}>LUXTA</Text>
       <Text style={styles.subtitle}>Weather-related photography assistance</Text>
+
       <View style={styles.buttonGroup}>
+
+        {/* ⭐ NEW BUTTON FOR PLAN MY SHOOT FEATURE */}
         <View style={styles.buttonWrapper}>
-          <Button title="Open Map" onPress={() => navigation.navigate("Map")} />
+          <Button
+            title="Plan My Shoot"
+            onPress={() => navigation.navigate("PlanShoot")}
+          />
         </View>
+
         <View style={styles.buttonWrapper}>
-          <Button title="Login" onPress={() => navigation.navigate("Login")} />
+          <Button
+            title="Open Map"
+            onPress={() => navigation.navigate("Map")}
+          />
         </View>
+
+        <View style={styles.buttonWrapper}>
+          <Button
+            title="Login"
+            onPress={() => navigation.navigate("Login")}
+          />
+        </View>
+
       </View>
     </View>
   );
