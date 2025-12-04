@@ -75,6 +75,27 @@
   background-color: #c73e54;
 }
 
+/* User Indicator */
+.user-indicator {
+  display: flex;
+  align-items: center;
+  padding: 10px 20px;
+  background-color: #16213e;
+  color: #ffffff;
+  border-radius: 8px;
+  border: 1px solid #0f3460;
+  font-size: 0.95rem;
+}
+
+.user-email {
+  color: #ffffff;
+  font-weight: 500;
+  max-width: 200px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 /* Circular Button */
 .circular-btn {
   width: 40px;
@@ -119,6 +140,21 @@
 
 .dropdown-item:hover {
   background-color: #0f3460;
+}
+
+.dropdown-divider {
+  height: 1px;
+  background-color: #0f3460;
+  margin: 4px 0;
+}
+
+.logout-btn {
+  color: #e94560 !important;
+}
+
+.logout-btn:hover {
+  background-color: #0f3460 !important;
+  color: #ffffff !important;
 }
 
 /* Map Section */

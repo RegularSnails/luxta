@@ -1,6 +1,8 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { View, Text, StyleSheet } from "react-native";
+import { useNavigation } from "@react-navigation/native";
 import './App.css';
+import { useAuth } from "../contexts/AuthContext";
 import {
   MapContainer,
   TileLayer,
@@ -303,6 +305,8 @@ function ProjectionMarker({ coords, onChange }) {
 }
 
 export default function MapScreen() {
+  const navigation = useNavigation();
+  const { currentUser, logout } = useAuth();
   const [coords, setCoords] = useState({ lat: INITIAL_LAT, lon: INITIAL_LON });
   const [ephemerisSummary, setEphemerisSummary] = useState(null);
   const [timeZone, setTimeZone] = useState("local");
@@ -312,6 +316,16 @@ export default function MapScreen() {
   const [isFloatingMenuOpen, setIsFloatingMenuOpen] = useState(false);
   const [isCircularDropdownOpen, setIsCircularDropdownOpen] = useState(false);
   const [isLeftDropdownOpen, setIsLeftDropdownOpen] = useState(false);
+
+  const handleLogout = async () => {
+    try {
+      await logout();
+      setIsCircularDropdownOpen(false);
+      navigation.navigate("Home");
+    } catch (error) {
+      console.error("Failed to logout:", error);
+    }
+  };
 
   async function handlePointChange({ lat, lon, lng }, dateOverride) {
     const rawLon = lon ?? lng;
@@ -325,16 +339,25 @@ export default function MapScreen() {
     try {
       // For local dev, target the Spring Boot server directly.
       // Adjust host/port as needed for your setup.
-      const resp = await fetch(
-        `http://localhost:8080/api/ephemeris?lat=${encodeURIComponent(
-          lat
-        )}&lon=${encodeURIComponent(lonVal)}&date=${encodeURIComponent(iso)}`
-      );
+      // API requests don't require authentication
+      const url = `http://localhost:8080/api/ephemeris?lat=${encodeURIComponent(
+        lat
+      )}&lon=${encodeURIComponent(lonVal)}&date=${encodeURIComponent(iso)}`;
+      
+      const resp = await fetch(url);
 
+      console.log("Response status:", resp.status, resp.statusText);
       const text = await resp.text();
       try {
         const json = JSON.parse(text);
         console.log("Ephemeris data:", json);
+
+        // Check for error response
+        if (json?.error) {
+          console.error("Ephemeris API error:", json.error);
+          setEphemerisSummary(null);
+          return;
+        }
 
         // Radiant Drift /rise-transit-set response:
         // {
@@ -424,8 +447,19 @@ export default function MapScreen() {
             )}
           </div>
 
-          {/* Login/Create Account Button */}
-          <button className="login-btn">Login/Create Account</button>
+          {/* Login/Create Account Button or User Indicator */}
+          {currentUser ? (
+            <div className="user-indicator">
+              <span className="user-email">{currentUser.email}</span>
+            </div>
+          ) : (
+            <button 
+              className="login-btn"
+              onClick={() => navigation.navigate("Login")}
+            >
+              Login/Create Account
+            </button>
+          )}
 
           {/* Circular Dropdown Button (rightmost) */}
           <div className="dropdown-container">
@@ -438,9 +472,36 @@ export default function MapScreen() {
             </button>
             {isCircularDropdownOpen && (
               <div className="dropdown-menu">
+                {currentUser && (
+                  <>
+                    <div className="dropdown-item" style={{ cursor: 'default', color: '#666' }}>
+                      {currentUser.email}
+                    </div>
+                    <div className="dropdown-divider"></div>
+                  </>
+                )}
                 <a href="#profile" className="dropdown-item">Profile</a>
                 <a href="#settings" className="dropdown-item">Settings</a>
-                <a href="#logout" className="dropdown-item">Logout</a>
+                {currentUser ? (
+                  <button 
+                    className="dropdown-item logout-btn"
+                    onClick={handleLogout}
+                    style={{ background: 'none', border: 'none', width: '100%', textAlign: 'left', cursor: 'pointer' }}
+                  >
+                    Logout
+                  </button>
+                ) : (
+                  <a 
+                    href="#login" 
+                    className="dropdown-item"
+                    onClick={(e) => {
+                      e.preventDefault();
+                      navigation.navigate("Login");
+                    }}
+                  >
+                    Login
+                  </a>
+                )}
               </div>
             )}
           </div>
