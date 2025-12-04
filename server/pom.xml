@@ -17,13 +17,34 @@
   </parent>
 
   <properties>
-    <java.version>21</java.version>
+    <!-- Match this to the JDK you have installed in the VM -->
+    <java.version>17</java.version>
   </properties>
 
   <dependencies>
+    <!-- REST API / web server -->
     <dependency>
       <groupId>org.springframework.boot</groupId>
       <artifactId>spring-boot-starter-web</artifactId>
+    </dependency>
+
+    <!-- JPA + Hibernate for database / User entity -->
+    <dependency>
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot-starter-data-jpa</artifactId>
+    </dependency>
+
+    <!-- H2 in-memory database (good for development) -->
+    <dependency>
+      <groupId>com.h2database</groupId>
+      <artifactId>h2</artifactId>
+      <scope>runtime</scope>
+    </dependency>
+
+    <!-- For BCryptPasswordEncoder (password hashing) -->
+    <dependency>
+      <groupId>org.springframework.security</groupId>
+      <artifactId>spring-security-crypto</artifactId>
     </dependency>
   </dependencies>
 
@@ -34,7 +55,9 @@
         <artifactId>spring-boot-maven-plugin</artifactId>
         <executions>
           <execution>
-            <goals><goal>repackage</goal></goals>
+            <goals>
+              <goal>repackage</goal>
+            </goals>
           </execution>
         </executions>
       </plugin>
