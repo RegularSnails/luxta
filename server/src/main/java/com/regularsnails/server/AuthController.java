@@ -10,7 +10,7 @@ import java.util.Optional;
 
 @RestController
 @RequestMapping("/api/auth")
-@CrossOrigin(origins = "*")  // allow your app to call this
+@CrossOrigin(origins = "*")
 public class AuthController {
 
     private final UserRepository userRepository;
