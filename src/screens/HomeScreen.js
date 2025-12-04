@@ -8,8 +8,7 @@ export default function HomeScreen({ navigation }) {
       <Text style={styles.subtitle}>Weather-related photography assistance</Text>
 
       <View style={styles.buttonGroup}>
-
-        {/* ⭐ NEW BUTTON FOR PLAN MY SHOOT FEATURE */}
+        //weather and sunincludsion trasntion to those screens!
         <View style={styles.buttonWrapper}>
           <Button
             title="Plan My Shoot"
@@ -30,7 +29,6 @@ export default function HomeScreen({ navigation }) {
             onPress={() => navigation.navigate("Login")}
           />
         </View>
-
       </View>
     </View>
   );
