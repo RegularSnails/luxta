@@ -1,45 +1,89 @@
 import React from "react";
-import { View, Text, Image, Linking, Pressable, StyleSheet } from "react-native";
+import { View, Text, StyleSheet, Button } from "react-native";
+import { WebView } from "react-native-webview";
+import { useAuth } from "../contexts/AuthContext";
 
 /**
- * Simple, zero-config "map" screen:
- * - shows a static OpenStreetMap tile around SF (change lat/lon as you like)
- * - tap "Open full map" to open interactive OSM in the browser
- * Works on iOS, Android, and Web without API keys.
+ * Native (iOS/Android) interactive map screen using OpenStreetMap:
+ * - loads the OSM map in an in-app WebView
+ * - fully interactive: pan, zoom, change layers, etc.
+ * - no API keys required
+ *
+ * On web, this screen is overridden by `MapScreen.web.js` which uses
+ * `react-leaflet` for a native-feeling browser map.
  */
 
-const LAT = 37.7749;
-const LON = -122.4194;
+const LAT = 34.05636;
+const LON = -117.82408;
 const ZOOM = 12;
-// OpenStreetMap static tile (one tile example). For a nicer image, you can swap in a static map service if desired.
-const TILE_URL = `https://tile.openstreetmap.org/${ZOOM}/${Math.floor((LON+180)/360*Math.pow(2,ZOOM))}/${Math.floor((1 - Math.log(Math.tan(LAT*Math.PI/180) + 1/Math.cos(LAT*Math.PI/180))/Math.PI)/2*Math.pow(2,ZOOM))}.png`;
 const OSM_URL = `https://www.openstreetmap.org/#map=${ZOOM}/${LAT}/${LON}`;
 
-export default function MapScreen() {
+export default function MapScreen({ navigation }) {
+  const { currentUser } = useAuth();
+
+  if (!currentUser) {
+    return (
+      <View style={[styles.container, styles.lockedContainer]}>
+        <Text style={styles.lockedTitle}>Login required</Text>
+        <Text style={styles.lockedText}>You need to sign in to access the map.</Text>
+        <Button title="Go to Login" onPress={() => navigation.replace("Login")} />
+      </View>
+    );
+  }
+
   return (
     <View style={styles.container}>
       <Text style={styles.title}>Luxta Map</Text>
-      <Image
-        source={{ uri: TILE_URL }}
-        style={styles.mapImage}
-        resizeMode="cover"
-        accessibilityLabel="Map preview"
-      />
-      <Pressable onPress={() => Linking.openURL(OSM_URL)} style={styles.button}>
-        <Text style={styles.buttonText}>Open full map</Text>
-      </Pressable>
+      <View style={styles.mapWrapper}>
+        <WebView
+          source={{ uri: OSM_URL }}
+          style={styles.map}
+          // Helps OSM behave more like a full-page app inside the WebView
+          originWhitelist={["*"]}
+          setSupportMultipleWindows={false}
+        />
+      </View>
       <Text style={styles.caption}>
-        Static preview. Click the button for the interactive map on OpenStreetMap.
+        This is the live OpenStreetMap view. Pan and zoom to explore locations.
       </Text>
     </View>
   );
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, alignItems: "center", justifyContent: "center", padding: 24, gap: 12 },
-  title: { fontSize: 22, fontWeight: "600" },
-  mapImage: { width: 320, height: 200, borderRadius: 8 },
-  button: { paddingVertical: 10, paddingHorizontal: 16, borderRadius: 8, backgroundColor: "#111" },
-  buttonText: { color: "#fff", fontSize: 16 },
-  caption: { fontSize: 12, opacity: 0.7, textAlign: "center", maxWidth: 360 }
+  container: {
+    flex: 1,
+    alignItems: "center",
+    justifyContent: "center",
+    padding: 0,
+    backgroundColor: "#000",
+  },
+  title: {
+    fontSize: 20,
+    fontWeight: "600",
+    color: "#fff",
+    paddingTop: 8,
+    paddingBottom: 4,
+  },
+  mapWrapper: {
+    flex: 1,
+    width: "100%",
+  },
+  map: {
+    flex: 1,
+  },
+  caption: {
+    fontSize: 12,
+    opacity: 0.8,
+    color: "#fff",
+    textAlign: "center",
+    paddingVertical: 8,
+    paddingHorizontal: 16,
+  },
+  lockedContainer: {
+    backgroundColor: "#111",
+    paddingHorizontal: 24,
+  },
+  lockedTitle: { color: "#fff", fontSize: 20, fontWeight: "700", marginBottom: 8 },
+  lockedText: { color: "#ddd", fontSize: 14, marginBottom: 12, textAlign: "center" },
 });
