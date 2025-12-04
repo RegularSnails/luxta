@@ -1,0 +1,196 @@
+name: CI/CD to EC2 (Spring Boot + Expo web)
+
+on:
+  push:
+    branches: [ main, luca ]
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  RN_DIR: '.'          # project root (contains package.json)
+  SERVER_DIR: 'server' # Spring Boot module (contains pom.xml)
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install JS deps (npm)
+        working-directory: ${{ env.RN_DIR }}
+        run: npm ci --no-audit --no-fund
+
+      # ---- ALWAYS export a fresh Expo web build into Spring static ----
+      - name: Export Expo web into Spring static (fresh)
+        working-directory: ${{ env.RN_DIR }}
+        env:
+          EXPO_NO_PROMPT: '1'
+          EXPO_NO_TELEMETRY: '1'
+          CI: 'true'
+        shell: bash
+        run: |
+          set -euxo pipefail
+          rm -rf "${{ env.SERVER_DIR }}/src/main/resources/static"
+          mkdir -p "${{ env.SERVER_DIR }}/src/main/resources/static"
+
+          npx --yes expo export --platform web --clear \
+            --output-dir "${{ env.SERVER_DIR }}/src/main/resources/static"
+
+          # version marker to verify in JAR and at runtime
+          echo "built $(date -Is) sha ${GITHUB_SHA::7}" \
+            > "${{ env.SERVER_DIR }}/src/main/resources/static/_version.txt"
+
+          test -f "${{ env.SERVER_DIR }}/src/main/resources/static/index.html"
+          ls -l "${{ env.SERVER_DIR }}/src/main/resources/static" | head -n 50 || true
+
+      - name: Set up Java 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: 'maven'
+
+      - name: Build Spring Boot JAR (clean)
+        working-directory: ${{ env.SERVER_DIR }}
+        run: |
+          chmod +x mvnw || true
+          ./mvnw -q -DskipTests clean package || mvn -q -DskipTests clean package
+          ls -l target
+
+      - name: Verify JAR contains _version marker
+        working-directory: ${{ env.SERVER_DIR }}
+        shell: bash
+        run: |
+          set -euxo pipefail
+          JAR=$(ls -1 target/*.jar | head -1)
+          echo "JAR=$JAR"
+          unzip -p "$JAR" BOOT-INF/classes/static/_version.txt | tee /tmp/version.txt
+          grep -q "${GITHUB_SHA::7}" /tmp/version.txt
+
+      # ---------- Stage jar into a flat folder so upload is trivial ----------
+      - name: Stage JAR for upload
+        shell: bash
+        run: |
+          set -euxo pipefail
+          rm -rf upload
+          mkdir -p upload
+          cp "${{ env.SERVER_DIR }}"/target/*.jar upload/
+          ls -l upload
+
+      - name: Upload JAR artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: app-jar
+          path: upload/*.jar
+          if-no-files-found: error
+
+  deploy-ec2:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download built JAR
+        uses: actions/download-artifact@v4
+        with:
+          name: app-jar
+          path: ./dist
+
+      - name: List downloaded artifact (debug)
+        run: ls -R ./dist || true
+
+      - name: Ensure deploy dir & stop service
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.EC2_HOST }}
+          username: ${{ secrets.EC2_USER }}
+          key: ${{ secrets.EC2_SSH_KEY }}
+          script: |
+            set -euxo pipefail
+            APP_DIR="/home/${{ secrets.EC2_USER }}/deploy"
+            mkdir -p "$APP_DIR"
+            sudo systemctl stop "${{ secrets.SERVICE_NAME }}" || true
+
+      - name: Copy JAR to EC2 (flatten path)
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ secrets.EC2_HOST }}
+          username: ${{ secrets.EC2_USER }}
+          key: ${{ secrets.EC2_SSH_KEY }}
+          source: "./dist/*.jar"
+          target: "/home/${{ secrets.EC2_USER }}/deploy/"
+          overwrite: true
+          strip_components: 1  # <— drops the leading "dist/" so the JAR lands directly in /deploy
+
+      - name: Point service to newest JAR & restart (robust)
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.EC2_HOST }}
+          username: ${{ secrets.EC2_USER }}
+          key: ${{ secrets.EC2_SSH_KEY }}
+          script: |
+            set -euxo pipefail
+            APP_DIR="/home/${{ secrets.EC2_USER }}/deploy"
+            SVC="${{ secrets.SERVICE_NAME }}"
+            SHORT_SHA="$(printf '%s' '${{ github.sha }}' | cut -c1-7)"
+
+            echo "== Remote JARs (timestamps) =="
+            ls -lt "$APP_DIR" || true
+            ls -lt "$APP_DIR"/*.jar || true
+
+            # Find newest jar anywhere under APP_DIR (exclude the app.jar symlink)
+            LATEST="$(find "$APP_DIR" -type f -name '*.jar' ! -name 'app.jar' -printf '%T@ %p\n' | sort -nr | head -1 | awk '{print $2}')"
+            [ -n "${LATEST:-}" ] || { echo "No JAR found under $APP_DIR"; exit 1; }
+            echo "LATEST=$LATEST"
+
+            ln -sfn "$LATEST" "$APP_DIR/app.jar"
+            echo "Now using $(readlink -f "$APP_DIR/app.jar")"
+
+            sudo systemctl daemon-reload || true
+            sudo systemctl restart "$SVC" || sudo systemctl start "$SVC" || true
+
+            # wait up to 60s for the service to be active
+            for i in $(seq 1 60); do
+              if sudo systemctl is-active --quiet "$SVC"; then
+                echo "Service is active"
+                break
+              fi
+              echo "Waiting for service to be active... ($i/60)"
+              sleep 1
+            done
+            sudo systemctl is-active "$SVC"
+
+            echo "== Verify marker inside the running JAR =="
+            unzip -p "$APP_DIR/app.jar" BOOT-INF/classes/static/_version.txt | tee /tmp/_version.txt || true
+            grep -q "$SHORT_SHA" /tmp/_version.txt || { echo "ERROR: JAR does not contain expected SHA ($SHORT_SHA)"; exit 1; }
+            echo "JAR marker OK ($SHORT_SHA)"
+
+            # Optional: HTTP smoke test (don't fail if _version.txt endpoint 404s)
+            echo "== HTTP smoke check =="
+            curl -fsSI http://127.0.0.1:8080/ | head -n1 || true
+            curl -fsS  http://127.0.0.1:8080/ | head -n20 || true
+
+            # Keep last 5 versioned jars (exclude app.jar)
+            find "$APP_DIR" -maxdepth 1 -type f -name '*.jar' ! -name 'app.jar' -printf '%T@ %p\n' \
+              | sort -nr | awk 'NR>5 {print $2}' | xargs -r rm -f
+
+      - name: Show logs on failure
+        if: failure()
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.EC2_HOST }}
+          username: ${{ secrets.EC2_USER }}
+          key: ${{ secrets.EC2_SSH_KEY }}
+          script: |
+            sudo systemctl status "${{ secrets.SERVICE_NAME }}" --no-pager || true
+            sudo journalctl -u "${{ secrets.SERVICE_NAME }}" -n 400 --no-pager || true

@@ -1,0 +1,13 @@
+{
+  "expo": {
+    "name": "Luxta",
+    "slug": "luxta",
+    "web": {
+      "name": "Luxta",
+      "shortName": "Luxta",
+      "bundler": "metro"
+    }
+  }
+}
+
+
