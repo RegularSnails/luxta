@@ -10,7 +10,7 @@ import java.util.Optional;
 
 @RestController
 @RequestMapping("/api/auth")
-@CrossOrigin(origins = "*")  // you can restrict this later
+@CrossOrigin(origins = "*")  // allow your app to call this
 public class AuthController {
 
     private final UserRepository userRepository;
@@ -64,7 +64,6 @@ public class AuthController {
             return ResponseEntity.status(401).body(Map.of("error", "Invalid email or password"));
         }
 
-        // For now, just return success + email. Later you can add JWT tokens, etc.
         return ResponseEntity.ok(Map.of(
                 "message", "Login successful",
                 "email", user.getEmail()
