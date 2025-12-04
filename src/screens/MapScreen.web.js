@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { View, Text, StyleSheet } from "react-native";
+import './App.css';
 import {
   MapContainer,
   TileLayer,
@@ -308,6 +309,9 @@ export default function MapScreen() {
   const [selectedDate, setSelectedDate] = useState(
     () => new Date().toISOString().slice(0, 10) // YYYY-MM-DD
   );
+  const [isFloatingMenuOpen, setIsFloatingMenuOpen] = useState(false);
+  const [isCircularDropdownOpen, setIsCircularDropdownOpen] = useState(false);
+  const [isLeftDropdownOpen, setIsLeftDropdownOpen] = useState(false);
 
   async function handlePointChange({ lat, lon, lng }, dateOverride) {
     const rawLon = lon ?? lng;
@@ -395,7 +399,53 @@ export default function MapScreen() {
   }
 
   return (
+    
     <View style={styles.container}>
+      <nav className="navbar">
+        <div className="navbar-left">
+          <span className="logo-text">Luxta</span>
+        </div>
+        <div className="navbar-right">
+          {/* Dropdown Button (left of Login) */}
+          <div className="dropdown-container">
+            <button
+              className="nav-dropdown-btn"
+              onClick={() => setIsLeftDropdownOpen(!isLeftDropdownOpen)}
+              aria-label="Menu dropdown"
+            >
+              ☰
+            </button>
+            {isLeftDropdownOpen && (
+              <div className="dropdown-menu">
+                <a href="#option1" className="dropdown-item">Saved Locations</a>
+                <a href="#option2" className="dropdown-item">Location 1</a>
+                <a href="#option3" className="dropdown-item">Location 2</a>
+              </div>
+            )}
+          </div>
+
+          {/* Login/Create Account Button */}
+          <button className="login-btn">Login/Create Account</button>
+
+          {/* Circular Dropdown Button (rightmost) */}
+          <div className="dropdown-container">
+            <button
+              className="circular-btn"
+              onClick={() => setIsCircularDropdownOpen(!isCircularDropdownOpen)}
+              aria-label="User menu"
+            >
+              ●
+            </button>
+            {isCircularDropdownOpen && (
+              <div className="dropdown-menu">
+                <a href="#profile" className="dropdown-item">Profile</a>
+                <a href="#settings" className="dropdown-item">Settings</a>
+                <a href="#logout" className="dropdown-item">Logout</a>
+              </div>
+            )}
+          </div>
+        </div>
+      </nav>
       <Text style={styles.title}></Text>
       <View style={styles.controlsRow}>
         <Text style={styles.controlsLabel}>Date:</Text>
@@ -597,6 +647,7 @@ export default function MapScreen() {
 }
 
 const styles = StyleSheet.create({
+  
   container: {
     flex: 1,
     alignItems: "stretch",
